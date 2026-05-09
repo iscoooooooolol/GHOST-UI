@@ -1,0 +1,993 @@
+--[[
+    Ghost UI Library
+    A Cerberus-inspired executor UI for Roblox scripts
+    Usage:
+        local Ghost = loadstring(...)() -- or require if local
+        local Window = Ghost.new("My Script")
+        local Tab = Window:Tab("Main", "ghost")  -- icon: ghost, zap, eye, settings, user, box
+        local Card = Tab:Card("Auto Farm", "zap")
+        Card:Label("Status", "Idle")
+        Card:Toggle("Enable", false, function(v) end)
+        Card:Dropdown("Mode", {"A","B"}, function(v) end)
+        Card:Input("Discord URL", "https://...", function(v) end)
+        Card:Button("Run Now", function() end)
+]]
+
+local Players      = game:GetService("Players")
+local UIS          = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService   = game:GetService("RunService")
+local LP           = Players.LocalPlayer
+
+local Ghost = {}
+Ghost.__index = Ghost
+
+local C = {
+    BG         = Color3.fromRGB(18,  18,  20),
+    SIDEBAR    = Color3.fromRGB(22,  22,  25),
+    CARD       = Color3.fromRGB(28,  28,  32),
+    CARD_HOVER = Color3.fromRGB(33,  33,  38),
+    BORDER     = Color3.fromRGB(40,  40,  46),
+    ACCENT     = Color3.fromRGB(56,  189, 159),   -- teal
+    ACCENT_DIM = Color3.fromRGB(30,  100, 84),
+    TEXT       = Color3.fromRGB(230, 232, 235),
+    TEXT_DIM   = Color3.fromRGB(130, 135, 145),
+    TEXT_MID   = Color3.fromRGB(175, 180, 190),
+    TOGGLE_OFF = Color3.fromRGB(55,  55,  62),
+    DANGER     = Color3.fromRGB(220, 70,  70),
+    SUCCESS    = Color3.fromRGB(56,  189, 159),
+}
+
+local ICONS = {
+    ghost    = "👻",
+    zap      = "⚡",
+    eye      = "👁",
+    settings = "⚙",
+    user     = "👤",
+    box      = "📦",
+    home     = "🏠",
+    sword    = "⚔",
+    star     = "⭐",
+    heart    = "❤",
+    bolt     = "⚡",
+    farm     = "🌾",
+    info     = "ℹ",
+    code     = "💻",
+    gift     = "🎁",
+    search   = "🔍",
+    map      = "🗺",
+}
+
+local function tw(obj, props, time, style, dir)
+    return TweenService:Create(obj,
+        TweenInfo.new(time or 0.18, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
+        props):Play()
+end
+
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, thick, transp)
+    local s = Instance.new("UIStroke")
+    s.Color = color or C.BORDER
+    s.Thickness = thick or 1
+    s.Transparency = transp or 0.4
+    s.Parent = parent
+    return s
+end
+
+local function newFrame(props)
+    local f = Instance.new("Frame")
+    f.BackgroundColor3 = props.bg or C.CARD
+    f.BorderSizePixel  = 0
+    f.Size             = props.size or UDim2.new(1,0,0,40)
+    f.Position         = props.pos or UDim2.new(0,0,0,0)
+    f.LayoutOrder      = props.order or 0
+    if props.parent then f.Parent = props.parent end
+    if props.transparent then f.BackgroundTransparency = 1 end
+    return f
+end
+
+local function newLabel(props)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Font      = props.font or Enum.Font.GothamMedium
+    l.Text      = props.text or ""
+    l.TextColor3 = props.color or C.TEXT
+    l.TextSize  = props.size or 12
+    l.TextXAlignment = props.align or Enum.TextXAlignment.Left
+    l.TextYAlignment = props.valign or Enum.TextYAlignment.Center
+    l.Size      = props.sz or UDim2.new(1,0,1,0)
+    l.Position  = props.pos or UDim2.new(0,0,0,0)
+    l.TextWrapped = props.wrap or false
+    if props.parent then l.Parent = props.parent end
+    return l
+end
+
+-- Ghost UI Window
+function Ghost.new(name, icon)
+    local self = setmetatable({}, Ghost)
+    self._tabs = {}
+    self._activeTab = nil
+    self._activeBtn = nil
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "GhostUI_"..name
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.IgnoreGuiInset = true
+    gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    self._gui = gui
+
+    -- Main window frame
+    local win = Instance.new("Frame")
+    win.Name = "Window"
+    win.Size = UDim2.new(0, 900, 0, 580)
+    win.Position = UDim2.new(0.5, -450, 0.5, -290)
+    win.BackgroundColor3 = C.BG
+    win.BorderSizePixel = 0
+    win.ClipsDescendants = true
+    win.Active = true
+    win.Parent = gui
+    corner(win, 14)
+    stroke(win, C.BORDER, 1, 0.3)
+    self._win = win
+
+    -- Sidebar
+    local sidebar = newFrame({
+        bg=C.SIDEBAR, size=UDim2.new(0,220,1,0), parent=win
+    })
+    corner(sidebar, 0)
+
+    -- Sidebar right border
+    local sideDiv = newFrame({
+        bg=C.BORDER, size=UDim2.new(0,1,1,0),
+        pos=UDim2.new(0,219,0,0), parent=win, transparent=false
+    })
+    sideDiv.BackgroundColor3 = C.BORDER
+    sideDiv.BackgroundTransparency = 0.5
+
+    -- Logo area
+    local logoArea = newFrame({
+        bg=C.SIDEBAR, size=UDim2.new(1,0,0,72), parent=sidebar, transparent=true
+    })
+
+    -- Ghost icon image (using emoji as placeholder, replace ImageLabel for real icon)
+    local iconBg = newFrame({
+        bg=Color3.fromRGB(30,30,34),
+        size=UDim2.new(0,38,0,38),
+        pos=UDim2.new(0,16,0.5,-19),
+        parent=logoArea
+    })
+    corner(iconBg, 9)
+
+    local iconLbl = newLabel({
+        text = ICONS[icon or "ghost"],
+        size = UDim2.new(1,0,1,0),
+        sz   = 20,
+        align= Enum.TextXAlignment.Center,
+        parent = iconBg,
+    })
+
+    local titleLbl = newLabel({
+        text   = name,
+        sz     = 14,
+        font   = Enum.Font.GothamBold,
+        color  = C.TEXT,
+        sz     = 15,
+        pos    = UDim2.new(0,62,0,18),
+        sz     = 14,
+        parent = logoArea,
+    })
+    titleLbl.Size = UDim2.new(1,-70,0,20)
+    titleLbl.Position = UDim2.new(0,62,0,18)
+
+    local subLbl = newLabel({
+        text   = "getcerberus.com style",
+        sz     = 10,
+        color  = C.TEXT_DIM,
+        font   = Enum.Font.Gotham,
+        parent = logoArea,
+    })
+    subLbl.Size = UDim2.new(1,-70,0,14)
+    subLbl.Position = UDim2.new(0,62,0,38)
+
+    -- Separator under logo
+    local logoDiv = newFrame({
+        bg=C.BORDER, size=UDim2.new(1,-32,0,1),
+        pos=UDim2.new(0,16,0,71), parent=sidebar
+    })
+    logoDiv.BackgroundTransparency = 0.5
+
+    -- Tab nav list
+    local navList = newFrame({
+        bg=C.SIDEBAR, size=UDim2.new(1,0,1,-80),
+        pos=UDim2.new(0,0,0,80), parent=sidebar, transparent=true
+    })
+
+    local navLayout = Instance.new("UIListLayout")
+    navLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    navLayout.Padding = UDim.new(0,2)
+    navLayout.Parent = navList
+
+    local navPad = Instance.new("UIPadding")
+    navPad.PaddingLeft = UDim.new(0,10)
+    navPad.PaddingRight = UDim.new(0,10)
+    navPad.PaddingTop = UDim.new(0,6)
+    navPad.Parent = navList
+
+    self._navList = navList
+    self._navPad = navPad
+
+    -- Footer
+    local footer = newFrame({
+        bg=C.SIDEBAR, size=UDim2.new(1,-32,0,24),
+        pos=UDim2.new(0,16,1,-32), parent=sidebar, transparent=true
+    })
+    newLabel({
+        text  = "Ghost UI | by Ice232056",
+        sz    = 10, color=C.TEXT_DIM,
+        font  = Enum.Font.Gotham,
+        align = Enum.TextXAlignment.Center,
+        parent= footer, sz=9,
+    })
+
+    -- Content area
+    local content = newFrame({
+        bg=C.BG, size=UDim2.new(1,-220,1,0),
+        pos=UDim2.new(0,220,0,0), parent=win, transparent=true
+    })
+    self._content = content
+
+    -- Top bar of content (search row)
+    local topBar = newFrame({
+        bg=C.BG, size=UDim2.new(1,0,0,56),
+        parent=content, transparent=true
+    })
+
+    -- Search box
+    local searchBg = newFrame({
+        bg=Color3.fromRGB(25,25,28),
+        size=UDim2.new(1,-80,0,34),
+        pos=UDim2.new(0,16,0.5,-17),
+        parent=topBar
+    })
+    corner(searchBg, 8)
+    stroke(searchBg, C.BORDER, 1, 0.5)
+
+    local searchIcon = newLabel({
+        text="🔍", sz=13, color=C.TEXT_DIM,
+        pos=UDim2.new(0,10,0,0), parent=searchBg,
+        align=Enum.TextXAlignment.Left
+    })
+    searchIcon.Size = UDim2.new(0,26,1,0)
+
+    local searchBox = Instance.new("TextBox")
+    searchBox.BackgroundTransparency = 1
+    searchBox.Size = UDim2.new(1,-36,1,0)
+    searchBox.Position = UDim2.new(0,32,0,0)
+    searchBox.Font = Enum.Font.Gotham
+    searchBox.PlaceholderText = "Search"
+    searchBox.PlaceholderColor3 = C.TEXT_DIM
+    searchBox.Text = ""
+    searchBox.TextColor3 = C.TEXT
+    searchBox.TextSize = 12
+    searchBox.TextXAlignment = Enum.TextXAlignment.Left
+    searchBox.ClearTextOnFocus = false
+    searchBox.Parent = searchBg
+    self._search = searchBox
+
+    -- Close button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0,34,0,34)
+    closeBtn.Position = UDim2.new(1,-50,0.5,-17)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(30,30,34)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = C.TEXT_DIM
+    closeBtn.TextSize = 13
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.AutoButtonColor = false
+    closeBtn.Parent = topBar
+    corner(closeBtn, 8)
+    closeBtn.MouseEnter:Connect(function()
+        tw(closeBtn, {BackgroundColor3=C.DANGER, TextColor3=C.TEXT}, 0.12)
+    end)
+    closeBtn.MouseLeave:Connect(function()
+        tw(closeBtn, {BackgroundColor3=Color3.fromRGB(30,30,34), TextColor3=C.TEXT_DIM}, 0.12)
+    end)
+    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+    -- Top divider
+    local topDiv = newFrame({
+        bg=C.BORDER, size=UDim2.new(1,-32,0,1),
+        pos=UDim2.new(0,16,0,55), parent=content
+    })
+    topDiv.BackgroundTransparency = 0.5
+
+    -- Cards scroll area
+    local scrollFrame = Instance.new("ScrollingFrame")
+    scrollFrame.Size = UDim2.new(1,0,1,-64)
+    scrollFrame.Position = UDim2.new(0,0,0,64)
+    scrollFrame.BackgroundTransparency = 1
+    scrollFrame.BorderSizePixel = 0
+    scrollFrame.ScrollBarThickness = 3
+    scrollFrame.ScrollBarImageColor3 = C.ACCENT
+    scrollFrame.CanvasSize = UDim2.new(0,0,0,0)
+    scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scrollFrame.Parent = content
+    self._scroll = scrollFrame
+
+    -- 2-column grid layout
+    local gridLayout = Instance.new("UIGridLayout")
+    gridLayout.CellSize = UDim2.new(0.5,-12,0,0)
+    gridLayout.AutomaticCellSize = Enum.AutomaticSize.Y
+    gridLayout.CellPadding = UDim2.new(0,8,0,8)
+    gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    gridLayout.Parent = scrollFrame
+
+    local gridPad = Instance.new("UIPadding")
+    gridPad.PaddingLeft = UDim.new(0,16)
+    gridPad.PaddingRight = UDim.new(0,16)
+    gridPad.PaddingTop = UDim.new(0,12)
+    gridPad.PaddingBottom = UDim.new(0,20)
+    gridPad.Parent = scrollFrame
+
+    self._grid = gridLayout
+    self._cardOrder = 0
+
+    -- Search filter logic
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local query = searchBox.Text:lower()
+        for _, card in ipairs(scrollFrame:GetChildren()) do
+            if card:IsA("Frame") then
+                local title = card:FindFirstChild("_title")
+                local name2 = title and title.Text:lower() or ""
+                if query == "" or name2:find(query, 1, true) then
+                    card.Visible = true
+                else
+                    card.Visible = false
+                end
+            end
+        end
+    end)
+
+    -- Dragging
+    local dragging, dragStart, startPos = false, nil, nil
+    topBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = inp.Position
+            startPos = win.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = inp.Position - dragStart
+            win.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    -- Tab container object
+    self._tabContent = {}
+
+    return self
+end
+
+-- Tab method
+function Ghost:Tab(name, icon)
+    local tabObj = {}
+    tabObj._name = name
+    tabObj._cards = {}
+    tabObj._window = self
+
+    -- Nav button
+    local navBtn = Instance.new("TextButton")
+    navBtn.Size = UDim2.new(1,0,0,38)
+    navBtn.BackgroundColor3 = C.SIDEBAR
+    navBtn.BorderSizePixel = 0
+    navBtn.Text = ""
+    navBtn.AutoButtonColor = false
+    navBtn.LayoutOrder = #self._tabs + 1
+    navBtn.Parent = self._navList
+    corner(navBtn, 8)
+
+    -- Active indicator bar
+    local activeBar = newFrame({
+        bg=C.ACCENT,
+        size=UDim2.new(0,3,0,20),
+        pos=UDim2.new(0,0,0.5,-10),
+        parent=navBtn
+    })
+    corner(activeBar, 3)
+    activeBar.Visible = false
+
+    -- Icon
+    local iconL = newLabel({
+        text  = ICONS[icon] or icon or "•",
+        sz    = 15,
+        color = C.TEXT_DIM,
+        align = Enum.TextXAlignment.Center,
+        pos   = UDim2.new(0,10,0,0),
+        parent= navBtn,
+    })
+    iconL.Size = UDim2.new(0,26,1,0)
+    iconL.Position = UDim2.new(0,8,0,0)
+
+    -- Label
+    local nameL = newLabel({
+        text  = name,
+        sz    = 12,
+        color = C.TEXT_DIM,
+        font  = Enum.Font.GothamMedium,
+        pos   = UDim2.new(0,40,0,0),
+        parent= navBtn,
+    })
+    nameL.Size = UDim2.new(1,-44,1,0)
+    nameL.Position = UDim2.new(0,40,0,0)
+
+    -- Group all cards in a folder tag
+    tabObj._folder = name
+
+    local function activate()
+        if self._activeTab == tabObj then return end
+
+        if self._activeBtn then
+            local prevBtn = self._activeBtn
+            tw(prevBtn, {BackgroundColor3=C.SIDEBAR}, 0.15)
+            prevBtn:FindFirstChild("ActiveBar") and (prevBtn.ActiveBar.Visible = false)
+            local prevIcon = prevBtn:FindFirstChild("Icon")
+            local prevName = prevBtn:FindFirstChild("Name")
+            if prevIcon then tw(prevIcon, {TextColor3=C.TEXT_DIM}, 0.15) end
+            if prevName then tw(prevName, {TextColor3=C.TEXT_DIM}, 0.15) end
+        end
+
+        self._activeTab = tabObj
+        self._activeBtn = navBtn
+        activeBar.Visible = true
+        tw(navBtn, {BackgroundColor3=Color3.fromRGB(32,35,38)}, 0.15)
+        tw(iconL, {TextColor3=C.ACCENT}, 0.15)
+        tw(nameL, {TextColor3=C.TEXT}, 0.15)
+
+        -- Show/hide cards
+        for _, card in ipairs(self._scroll:GetChildren()) do
+            if card:IsA("Frame") then
+                card.Visible = (card:GetAttribute("Tab") == name)
+            end
+        end
+    end
+
+    tabObj._activate = activate
+
+    navBtn.Name = "NavBtn_"..name
+    activeBar.Name = "ActiveBar"
+    iconL.Name = "Icon"
+    nameL.Name = "Name"
+
+    navBtn.MouseEnter:Connect(function()
+        if self._activeTab ~= tabObj then
+            tw(navBtn, {BackgroundColor3=Color3.fromRGB(28,30,34)}, 0.12)
+        end
+    end)
+    navBtn.MouseLeave:Connect(function()
+        if self._activeTab ~= tabObj then
+            tw(navBtn, {BackgroundColor3=C.SIDEBAR}, 0.12)
+        end
+    end)
+    navBtn.MouseButton1Click:Connect(activate)
+
+    table.insert(self._tabs, tabObj)
+
+    -- Activate first tab automatically
+    if #self._tabs == 1 then
+        task.defer(activate)
+    end
+
+    -- Card builder
+    function tabObj:Card(title, cardIcon)
+        local win = self._window
+        win._cardOrder = win._cardOrder + 1
+
+        local card = newFrame({
+            bg=C.CARD, parent=win._scroll
+        })
+        card.Size = UDim2.new(0,1,0,0) -- grid controls size
+        card.AutomaticSize = Enum.AutomaticSize.Y
+        card:SetAttribute("Tab", tabObj._name)
+        card.LayoutOrder = win._cardOrder
+        card.Visible = (win._activeTab == tabObj)
+        corner(card, 10)
+        stroke(card, C.BORDER, 1, 0.45)
+
+        local cardList = Instance.new("UIListLayout")
+        cardList.SortOrder = Enum.SortOrder.LayoutOrder
+        cardList.Padding = UDim.new(0, 0)
+        cardList.Parent = card
+
+        local cardPad = Instance.new("UIPadding")
+        cardPad.PaddingBottom = UDim.new(0, 12)
+        cardPad.Parent = card
+
+        -- Card header
+        local header = newFrame({
+            bg=C.CARD, size=UDim2.new(1,0,0,44),
+            parent=card, transparent=false, order=1
+        })
+        header.BackgroundTransparency = 1
+
+        local hPad = Instance.new("UIPadding")
+        hPad.PaddingLeft = UDim.new(0,14)
+        hPad.PaddingRight = UDim.new(0,14)
+        hPad.Parent = header
+
+        -- Card icon bg
+        local cIconBg = newFrame({
+            bg=Color3.fromRGB(34,38,42),
+            size=UDim2.new(0,26,0,26),
+            pos=UDim2.new(0,0,0.5,-13),
+            parent=header
+        })
+        corner(cIconBg, 7)
+
+        local cIcon = newLabel({
+            text  = ICONS[cardIcon] or cardIcon or "•",
+            sz    = 13,
+            color = C.ACCENT,
+            align = Enum.TextXAlignment.Center,
+            parent= cIconBg,
+        })
+
+        local cTitle = newLabel({
+            text  = title,
+            sz    = 13,
+            font  = Enum.Font.GothamBold,
+            color = C.TEXT,
+            pos   = UDim2.new(0,34,0,0),
+            parent= header,
+        })
+        cTitle.Size = UDim2.new(1,-34,1,0)
+        cTitle.Position = UDim2.new(0,34,0,0)
+        cTitle.Name = "_title"
+
+        -- Divider under header
+        local hDiv = newFrame({
+            bg=C.BORDER, size=UDim2.new(1,-28,0,1),
+            pos=UDim2.new(0,14,0,0), parent=card, order=2
+        })
+        hDiv.BackgroundTransparency = 0.5
+
+        local rowOrder = 10
+        local cardObj = {}
+
+        -- Label row (key: value)
+        function cardObj:Label(key, value)
+            rowOrder = rowOrder + 1
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,28),
+                parent=card, order=rowOrder, transparent=true
+            })
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.Parent = row
+
+            local keyL = newLabel({
+                text  = key,
+                sz    = 11,
+                font  = Enum.Font.GothamBold,
+                color = C.TEXT_MID,
+                parent= row,
+            })
+            keyL.Size = UDim2.new(0.5,0,1,0)
+
+            local valL = newLabel({
+                text  = tostring(value or "—"),
+                sz    = 11,
+                color = C.TEXT_DIM,
+                align = Enum.TextXAlignment.Right,
+                parent= row,
+            })
+            valL.Size = UDim2.new(0.5,0,1,0)
+            valL.Position = UDim2.new(0.5,0,0,0)
+
+            local setter = {
+                Set = function(_, v)
+                    valL.Text = tostring(v)
+                end,
+            }
+            return setter
+        end
+
+        -- Toggle row
+        function cardObj:Toggle(label, default, callback)
+            rowOrder = rowOrder + 1
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,36),
+                parent=card, order=rowOrder, transparent=true
+            })
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.Parent = row
+
+            local lbl = newLabel({
+                text  = label,
+                sz    = 11,
+                color = C.TEXT_DIM,
+                font  = Enum.Font.Gotham,
+                parent= row,
+            })
+            lbl.Size = UDim2.new(1,-56,1,0)
+
+            local val = default or false
+
+            local pill = newFrame({
+                bg=val and C.ACCENT or C.TOGGLE_OFF,
+                size=UDim2.new(0,38,0,20),
+                pos=UDim2.new(1,-38,0.5,-10),
+                parent=row
+            })
+            corner(pill, 20)
+
+            local knob = newFrame({
+                bg=Color3.fromRGB(255,255,255),
+                size=UDim2.new(0,14,0,14),
+                pos=val and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7),
+                parent=pill
+            })
+            corner(knob, 20)
+
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1,0,1,0)
+            btn.BackgroundTransparency = 1
+            btn.Text = ""
+            btn.Parent = row
+
+            btn.MouseButton1Click:Connect(function()
+                val = not val
+                tw(pill, {BackgroundColor3=val and C.ACCENT or C.TOGGLE_OFF}, 0.18)
+                tw(knob, {Position=val and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7)}, 0.18)
+                tw(lbl, {TextColor3=val and C.TEXT or C.TEXT_DIM}, 0.12)
+                if callback then task.spawn(callback, val) end
+            end)
+
+            return {
+                Set = function(_, v)
+                    val = v
+                    pill.BackgroundColor3 = v and C.ACCENT or C.TOGGLE_OFF
+                    knob.Position = v and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7)
+                    lbl.TextColor3 = v and C.TEXT or C.TEXT_DIM
+                end
+            }
+        end
+
+        -- Dropdown
+        function cardObj:Dropdown(label, options, callback)
+            rowOrder = rowOrder + 1
+            local totalH = 24 + 36
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,24),
+                parent=card, order=rowOrder, transparent=true
+            })
+            row.AutomaticSize = Enum.AutomaticSize.Y
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.PaddingTop = UDim.new(0,4)
+            rPad.Parent = row
+
+            local lbl = newLabel({
+                text  = label,
+                sz    = 10,
+                color = C.TEXT_DIM,
+                font  = Enum.Font.Gotham,
+                parent= row,
+                sz    = 10,
+            })
+            lbl.Size = UDim2.new(1,0,0,18)
+
+            local selected = options[1] or "---"
+
+            local ddBg = newFrame({
+                bg=Color3.fromRGB(22,24,27),
+                size=UDim2.new(1,0,0,30),
+                pos=UDim2.new(0,0,0,20),
+                parent=row
+            })
+            corner(ddBg, 7)
+            stroke(ddBg, C.BORDER, 1, 0.5)
+
+            local selLabel = newLabel({
+                text  = selected,
+                sz    = 11,
+                color = C.TEXT_MID,
+                font  = Enum.Font.Gotham,
+                pos   = UDim2.new(0,10,0,0),
+                parent= ddBg,
+            })
+            selLabel.Size = UDim2.new(1,-30,1,0)
+            selLabel.Position = UDim2.new(0,10,0,0)
+
+            local arrow = newLabel({
+                text  = "∧",
+                sz    = 11,
+                color = C.ACCENT,
+                align = Enum.TextXAlignment.Center,
+                parent= ddBg,
+            })
+            arrow.Size = UDim2.new(0,24,1,0)
+            arrow.Position = UDim2.new(1,-26,0,0)
+            arrow.Rotation = 180
+
+            local open = false
+            local optionFrames = {}
+
+            local optionContainer = newFrame({
+                bg=Color3.fromRGB(24,26,30),
+                size=UDim2.new(1,0,0,0),
+                pos=UDim2.new(0,0,0,52),
+                parent=row
+            })
+            corner(optionContainer, 7)
+            stroke(optionContainer, C.BORDER, 1, 0.5)
+            optionContainer.ClipsDescendants = true
+            optionContainer.Visible = false
+
+            local optList = Instance.new("UIListLayout")
+            optList.SortOrder = Enum.SortOrder.LayoutOrder
+            optList.Parent = optionContainer
+
+            for i, opt in ipairs(options) do
+                local optBtn = Instance.new("TextButton")
+                optBtn.Size = UDim2.new(1,0,0,28)
+                optBtn.BackgroundTransparency = 1
+                optBtn.BorderSizePixel = 0
+                optBtn.Text = ""
+                optBtn.LayoutOrder = i
+                optBtn.Parent = optionContainer
+
+                local optLbl = newLabel({
+                    text  = opt,
+                    sz    = 11,
+                    color = C.TEXT_MID,
+                    font  = Enum.Font.Gotham,
+                    pos   = UDim2.new(0,10,0,0),
+                    parent= optBtn,
+                })
+                optLbl.Size = UDim2.new(1,-10,1,0)
+                optLbl.Position = UDim2.new(0,10,0,0)
+
+                optBtn.MouseEnter:Connect(function()
+                    tw(optBtn, {BackgroundTransparency=0.7}, 0.1)
+                    optBtn.BackgroundColor3 = C.ACCENT_DIM
+                end)
+                optBtn.MouseLeave:Connect(function()
+                    tw(optBtn, {BackgroundTransparency=1}, 0.1)
+                end)
+                optBtn.MouseButton1Click:Connect(function()
+                    selected = opt
+                    selLabel.Text = opt
+                    open = false
+                    optionContainer.Visible = false
+                    arrow.Rotation = 180
+                    if callback then task.spawn(callback, opt) end
+                end)
+                table.insert(optionFrames, optBtn)
+            end
+
+            local function toggleDD()
+                open = not open
+                optionContainer.Visible = open
+                optionContainer.Size = UDim2.new(1,0,0, open and (optList.AbsoluteContentSize.Y) or 0)
+                arrow.Rotation = open and 0 or 180
+            end
+
+            local ddBtn = Instance.new("TextButton")
+            ddBtn.Size = UDim2.new(1,0,0,30)
+            ddBtn.Position = UDim2.new(0,0,0,20)
+            ddBtn.BackgroundTransparency = 1
+            ddBtn.Text = ""
+            ddBtn.Parent = row
+            ddBtn.MouseButton1Click:Connect(toggleDD)
+        end
+
+        -- Text input row
+        function cardObj:Input(label, placeholder, callback)
+            rowOrder = rowOrder + 1
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,24),
+                parent=card, order=rowOrder, transparent=true
+            })
+            row.AutomaticSize = Enum.AutomaticSize.Y
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.PaddingTop = UDim.new(0,4)
+            rPad.Parent = row
+
+            local lbl = newLabel({
+                text  = label,
+                sz    = 10,
+                color = C.TEXT_DIM,
+                font  = Enum.Font.Gotham,
+                parent= row,
+            })
+            lbl.Size = UDim2.new(1,0,0,18)
+
+            local inputBg = newFrame({
+                bg=Color3.fromRGB(22,24,27),
+                size=UDim2.new(1,0,0,30),
+                pos=UDim2.new(0,0,0,20),
+                parent=row
+            })
+            corner(inputBg, 7)
+            stroke(inputBg, C.BORDER, 1, 0.5)
+
+            local tb = Instance.new("TextBox")
+            tb.Size = UDim2.new(1,-20,1,0)
+            tb.Position = UDim2.new(0,10,0,0)
+            tb.BackgroundTransparency = 1
+            tb.Font = Enum.Font.Gotham
+            tb.PlaceholderText = placeholder or ""
+            tb.PlaceholderColor3 = C.TEXT_DIM
+            tb.Text = ""
+            tb.TextColor3 = C.TEXT
+            tb.TextSize = 11
+            tb.TextXAlignment = Enum.TextXAlignment.Left
+            tb.ClearTextOnFocus = false
+            tb.Parent = inputBg
+
+            tb.FocusLost:Connect(function()
+                if callback then task.spawn(callback, tb.Text) end
+            end)
+
+            inputBg.InputBegan:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    stroke(inputBg, C.ACCENT, 1, 0)
+                end
+            end)
+            inputBg.InputEnded:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    stroke(inputBg, C.BORDER, 1, 0.5)
+                end
+            end)
+        end
+
+        -- Button
+        function cardObj:Button(label, callback)
+            rowOrder = rowOrder + 1
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,36),
+                parent=card, order=rowOrder, transparent=true
+            })
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.PaddingTop = UDim.new(0,4)
+            rPad.Parent = row
+
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1,0,0,28)
+            btn.BackgroundColor3 = Color3.fromRGB(32,36,40)
+            btn.BorderSizePixel = 0
+            btn.Text = label
+            btn.TextColor3 = C.TEXT
+            btn.TextSize = 11
+            btn.Font = Enum.Font.GothamMedium
+            btn.AutoButtonColor = false
+            btn.Parent = row
+            corner(btn, 7)
+            stroke(btn, C.BORDER, 1, 0.4)
+
+            btn.MouseEnter:Connect(function()
+                tw(btn, {BackgroundColor3=Color3.fromRGB(40,46,52)}, 0.12)
+                tw(btn, {TextColor3=C.ACCENT}, 0.12)
+            end)
+            btn.MouseLeave:Connect(function()
+                tw(btn, {BackgroundColor3=Color3.fromRGB(32,36,40)}, 0.12)
+                tw(btn, {TextColor3=C.TEXT}, 0.12)
+            end)
+            btn.MouseButton1Click:Connect(function()
+                tw(btn, {BackgroundColor3=C.ACCENT_DIM}, 0.08)
+                task.delay(0.12, function()
+                    tw(btn, {BackgroundColor3=Color3.fromRGB(32,36,40)}, 0.12)
+                    tw(btn, {TextColor3=C.TEXT}, 0.08)
+                end)
+                if callback then task.spawn(callback) end
+            end)
+        end
+
+        -- Section divider inside card
+        function cardObj:Divider(label)
+            rowOrder = rowOrder + 1
+            local row = newFrame({
+                bg=C.CARD, size=UDim2.new(1,0,0,22),
+                parent=card, order=rowOrder, transparent=true
+            })
+
+            local rPad = Instance.new("UIPadding")
+            rPad.PaddingLeft = UDim.new(0,14)
+            rPad.PaddingRight = UDim.new(0,14)
+            rPad.Parent = row
+
+            local div = newFrame({
+                bg=C.BORDER, size=UDim2.new(1,0,0,1),
+                pos=UDim2.new(0,0,0.5,0), parent=row
+            })
+            div.BackgroundTransparency = 0.55
+
+            if label then
+                local lDiv = newFrame({
+                    bg=C.CARD,
+                    size=UDim2.new(0, #label*6+12, 1,0),
+                    pos=UDim2.new(0,0,0,0),
+                    parent=row
+                })
+                newLabel({
+                    text=label, sz=9, color=C.TEXT_DIM,
+                    font=Enum.Font.GothamMedium,
+                    align=Enum.TextXAlignment.Left,
+                    parent=lDiv,
+                })
+            end
+        end
+
+        return cardObj
+    end
+
+    return tabObj
+end
+
+-- Notification
+function Ghost:Notify(title, content, duration)
+    duration = duration or 3
+    local gui = self._gui
+
+    local notif = newFrame({
+        bg=C.CARD, size=UDim2.new(0,280,0,64),
+        pos=UDim2.new(1,-296,1,80), parent=gui
+    })
+    corner(notif, 10)
+    stroke(notif, C.ACCENT, 1, 0.3)
+
+    local accentBar = newFrame({
+        bg=C.ACCENT, size=UDim2.new(0,3,1,-16),
+        pos=UDim2.new(0,0,0,8), parent=notif
+    })
+    corner(accentBar, 3)
+
+    newLabel({
+        text=title, sz=12, font=Enum.Font.GothamBold,
+        color=C.TEXT, pos=UDim2.new(0,16,0,10), parent=notif,
+    }).Size = UDim2.new(1,-20,0,18)
+
+    newLabel({
+        text=content, sz=11, color=C.TEXT_DIM, font=Enum.Font.Gotham,
+        pos=UDim2.new(0,16,0,30), parent=notif, wrap=true,
+    }).Size = UDim2.new(1,-20,0,26)
+
+    tw(notif, {Position=UDim2.new(1,-296,1,-80)}, 0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+    task.delay(duration, function()
+        tw(notif, {Position=UDim2.new(1,-296,1,80)}, 0.25)
+        task.delay(0.3, function() notif:Destroy() end)
+    end)
+end
+
+return Ghost
