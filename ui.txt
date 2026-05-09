@@ -120,7 +120,7 @@ function Ghost.new(name, icon)
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.IgnoreGuiInset = true
-    gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    gui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     self._gui = gui
 
     -- Main window frame
